@@ -1,8 +1,9 @@
 # stems2als
 
 `stems2als` is a small cross-platform CLI that creates an Ableton Live Set from
-a folder of audio stems. Every MP3, WAV, FLAC, AIFF, OGG, M4A, AAC, or WMA file
-becomes a separate Arrangement View audio track starting at bar 1.
+a folder of audio stems or a zip archive containing them. Every MP3, WAV, FLAC,
+AIFF, OGG, M4A, AAC, or WMA file becomes a separate Arrangement View audio
+track starting at bar 1.
 
 The implementation deliberately patches an Ableton-authored template instead
 of trying to invent a minimal `.als` document. Ableton's file format is private
@@ -33,6 +34,17 @@ Windows PowerShell:
 
 ## Use
 
+Pass either a folder or a zip archive:
+
+```bash
+stems2als ./my-stems
+stems2als "./My Song.zip"
+```
+
+By default the project is named after the input and written to a matching
+project folder, so both commands above create `./my-stems/my-stems.als` and
+`./My Song/My Song.als` respectively. Override the location with `--output`:
+
 ```bash
 stems2als ./my-stems --output ./my-project/my-project.als --project-name "My Project"
 ```
@@ -40,6 +52,8 @@ stems2als ./my-stems --output ./my-project/my-project.als --project-name "My Pro
 The command:
 
 - creates one Arrangement View track per audio file;
+- accepts a folder or a zip archive, searching archives recursively;
+- names the project after the input folder or archive;
 - places identified vocal tracks first;
 - places a track named `instrum` last and sets its volume to zero;
 - copies audio into `Samples/Imported/` beside the set;
@@ -50,14 +64,14 @@ The command:
 Set a different tempo with `--tempo`:
 
 ```bash
-stems2als ./my-stems -o ./my-project/my-project.als --tempo 128
+stems2als ./my-stems --tempo 128
 ```
 
 To generate on another computer or use a specific Live version, pass any
 Ableton-authored set containing at least one audio track and one audio clip:
 
 ```bash
-stems2als ./my-stems -o ./my-project.als --template "/path/to/template.als"
+stems2als ./my-stems --template "/path/to/template.als"
 ```
 
 You can also set the `ABLETON_TEMPLATE` environment variable.

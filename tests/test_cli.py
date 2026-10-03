@@ -5,14 +5,19 @@ import tempfile
 import unittest
 import wave
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 from stems2als.cli import (
     TemplateFiles,
     build_project,
     clean_track_name,
+    collect_audio_files,
     discover_templates,
+    extract_archive,
+    is_zip_archive,
     list_audio_files,
+    source_name,
     write_project,
 )
 
@@ -125,6 +130,113 @@ class Stems2AlsTests(unittest.TestCase):
     def test_template_files_dataclass(self) -> None:
         path = Path("template.als")
         self.assertEqual(TemplateFiles(path, path).project, path)
+
+    def test_source_name_uses_folder_or_archive_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary) / "My Stems"
+            folder.mkdir()
+            self._write_wav(folder / "vocals.wav")
+            archive = Path(temporary) / "My Archive.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.write(folder / "vocals.wav", "vocals.wav")
+
+            self.assertEqual(source_name(folder), "My Stems")
+            self.assertEqual(source_name(archive), "My Archive")
+            self.assertTrue(is_zip_archive(archive))
+            self.assertFalse(is_zip_archive(folder))
+
+    def test_collect_audio_files_reads_nested_zip_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            stems = temporary_path / "stems"
+            stems.mkdir()
+            self._write_wav(stems / "bass.wav")
+            self._write_wav(stems / "instrum.wav")
+            self._write_wav(stems / "vocals.wav")
+
+            archive = temporary_path / "bundle.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                for audio_file in sorted(stems.iterdir()):
+                    bundle.write(audio_file, f"bundle/{audio_file.name}")
+                bundle.writestr("bundle/notes.txt", "ignored")
+                bundle.writestr("__MACOSX/bundle/._vocals.wav", "resource fork")
+
+            workspace = temporary_path / "workspace"
+            workspace.mkdir()
+            collected = collect_audio_files(archive, workspace)
+            self.assertEqual(
+                [path.name for path in collected],
+                ["vocals.wav", "bass.wav", "instrum.wav"],
+            )
+
+    def test_collect_audio_files_rejects_unsupported_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            plain_file = temporary_path / "notes.txt"
+            plain_file.write_text("not an archive")
+            with self.assertRaises(ValueError):
+                collect_audio_files(plain_file, temporary_path / "workspace")
+            with self.assertRaises(FileNotFoundError):
+                collect_audio_files(temporary_path / "missing", temporary_path)
+
+    def test_extract_archive_rejects_path_traversal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            archive = temporary_path / "evil.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr("../escaped.wav", "payload")
+
+            destination = temporary_path / "workspace"
+            destination.mkdir()
+            with self.assertRaises(ValueError):
+                extract_archive(archive, destination)
+            self.assertFalse((temporary_path / "escaped.wav").exists())
+
+    def test_zip_archive_builds_same_project_as_folder(self) -> None:
+        try:
+            templates = discover_templates()
+        except FileNotFoundError as exc:
+            self.skipTest(str(exc))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            stems = temporary_path / "stems"
+            stems.mkdir()
+            self._write_wav(stems / "bass.wav")
+            self._write_wav(stems / "instrum.wav")
+            self._write_wav(stems / "vocals.wav")
+
+            archive = temporary_path / "bundle.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                for audio_file in sorted(stems.iterdir()):
+                    bundle.write(audio_file, audio_file.name)
+
+            workspace = temporary_path / "workspace"
+            workspace.mkdir()
+            audio_files = collect_audio_files(archive, workspace)
+            output = temporary_path / "bundle" / "bundle.als"
+            root = build_project(templates, audio_files, output, 120)
+            write_project(root, output)
+
+            with gzip.open(output, "rb") as project:
+                parsed = ET.fromstring(project.read())
+
+            tracks = parsed.findall("./LiveSet/Tracks/AudioTrack")
+            self.assertEqual(
+                [
+                    track.find("./Name/EffectiveName").get("Value")
+                    for track in tracks
+                ],
+                ["vocals", "bass", "instrum"],
+            )
+            self.assertEqual(
+                tracks[-1].find("./DeviceChain/Mixer/Volume/Manual").get("Value"),
+                "0",
+            )
+            for audio_file in audio_files:
+                self.assertTrue(
+                    (output.parent / "Samples" / "Imported" / audio_file.name).is_file()
+                )
 
 
 if __name__ == "__main__":

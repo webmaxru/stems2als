@@ -7,7 +7,10 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
+import zipfile
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -48,17 +51,23 @@ class TemplateFiles:
     clip_source: Path
 
 
-def list_audio_files(directory: Path) -> list[Path]:
+def _is_audio_file(path: Path) -> bool:
+    return (
+        path.is_file()
+        and path.suffix.lower() in AUDIO_EXTENSIONS
+        and not path.name.startswith("._")
+        and "__MACOSX" not in path.parts
+    )
+
+
+def list_audio_files(directory: Path, recursive: bool = False) -> list[Path]:
     if not directory.exists():
         raise FileNotFoundError(f"Input directory not found: {directory}")
     if not directory.is_dir():
         raise NotADirectoryError(f"Input path is not a directory: {directory}")
 
-    tracks = [
-        path
-        for path in directory.iterdir()
-        if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS
-    ]
+    candidates = directory.rglob("*") if recursive else directory.iterdir()
+    tracks = [path for path in candidates if _is_audio_file(path)]
     if not tracks:
         supported = ", ".join(sorted(AUDIO_EXTENSIONS))
         raise ValueError(
@@ -66,6 +75,49 @@ def list_audio_files(directory: Path) -> list[Path]:
             f"Supported extensions: {supported}"
         )
     return sorted(tracks, key=_track_sort_key)
+
+
+def is_zip_archive(path: Path) -> bool:
+    return path.is_file() and zipfile.is_zipfile(path)
+
+
+def extract_archive(archive: Path, destination: Path) -> Path:
+    if not zipfile.is_zipfile(archive):
+        raise ValueError(f"Input file is not a zip archive: {archive}")
+
+    destination = destination.resolve()
+    with zipfile.ZipFile(archive) as bundle:
+        for member in bundle.infolist():
+            if member.is_dir():
+                continue
+            target = (destination / member.filename).resolve()
+            if target != destination and destination not in target.parents:
+                raise ValueError(
+                    f"Zip archive contains an unsafe path: {member.filename}"
+                )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with bundle.open(member) as source, open(target, "wb") as extracted:
+                shutil.copyfileobj(source, extracted)
+    return destination
+
+
+def source_name(input_path: Path) -> str:
+    resolved = input_path.expanduser().resolve()
+    name = resolved.stem if is_zip_archive(resolved) else resolved.name
+    return name or "stems"
+
+
+def collect_audio_files(input_path: Path, workspace: Path) -> list[Path]:
+    input_path = input_path.expanduser()
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input path not found: {input_path}")
+    if input_path.is_dir():
+        return list_audio_files(input_path)
+    if not is_zip_archive(input_path):
+        raise ValueError(
+            f"Input must be a folder or a zip archive: {input_path}"
+        )
+    return list_audio_files(extract_archive(input_path, workspace), recursive=True)
 
 
 def audio_info(path: Path) -> AudioInfo:
@@ -349,8 +401,17 @@ def copy_audio_files(audio_files: Iterable[Path], project_path: Path) -> list[Pa
     assets_dir = project_path.parent / "Samples" / "Imported"
     assets_dir.mkdir(parents=True, exist_ok=True)
     copied: list[Path] = []
+    used: set[str] = set()
     for source in audio_files:
-        destination = assets_dir / source.name
+        name = source.name
+        if name in used:
+            stem, suffix = Path(name).stem, Path(name).suffix
+            index = 2
+            while f"{stem}-{index}{suffix}" in used:
+                index += 1
+            name = f"{stem}-{index}{suffix}"
+        used.add(name)
+        destination = assets_dir / name
         if source.resolve() != destination.resolve():
             shutil.copy2(source, destination)
         copied.append(destination)
@@ -433,8 +494,8 @@ def write_project(root: ET.Element, project_path: Path) -> None:
 
 
 def run(
-    input_dir: Path,
-    output_path: Path,
+    input_path: Path,
+    output_path: Path | None,
     project_name: str | None,
     template: Path | None,
     tempo: float,
@@ -442,17 +503,24 @@ def run(
     if tempo < 20 or tempo > 999:
         raise ValueError("Tempo must be between 20 and 999 BPM")
 
-    audio_files = list_audio_files(input_dir)
+    input_path = input_path.expanduser()
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input path not found: {input_path}")
+
+    name = source_name(input_path)
+    if output_path is None:
+        output_path = Path(name) / f"{name}.als"
     output_path = output_path.expanduser().resolve()
     if output_path.suffix.lower() != ".als":
         output_path = output_path.with_suffix(".als")
 
     template_files = discover_templates(template)
-    root = build_project(template_files, audio_files, output_path, tempo)
-    if project_name:
-        root.set("Creator", f"stems2als {__version__} - {project_name}")
-    else:
-        root.set("Creator", f"stems2als {__version__}")
+    with ExitStack() as stack:
+        workspace = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        audio_files = collect_audio_files(input_path, workspace)
+        root = build_project(template_files, audio_files, output_path, tempo)
+
+    root.set("Creator", f"stems2als {__version__} - {project_name or name}")
     write_project(root, output_path)
 
     print(f"Created Ableton set: {output_path}")
@@ -469,13 +537,20 @@ def build_parser() -> argparse.ArgumentParser:
             "arrangement track starting at bar 1."
         )
     )
-    parser.add_argument("input_dir", type=Path, help="Directory containing audio stems")
+    parser.add_argument(
+        "input_path",
+        type=Path,
+        help="Folder or zip archive containing audio stems",
+    )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=Path("stems.als"),
-        help="Output .als path (default: ./stems.als)",
+        default=None,
+        help=(
+            "Output .als path. Defaults to a project folder named after the "
+            "input folder or zip archive, e.g. ./my-stems/my-stems.als"
+        ),
     )
     parser.add_argument(
         "-n",
@@ -510,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return run(
-            args.input_dir,
+            args.input_path,
             args.output,
             args.project_name,
             args.template,
