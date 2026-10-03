@@ -21,18 +21,20 @@ macOS/Linux:
 
 ```bash
 .venv/bin/pip install -e .
+source .venv/bin/activate
 ```
 
 Windows PowerShell:
 
 ```powershell
 .venv\Scripts\pip install -e .
+.venv\Scripts\Activate.ps1
 ```
 
 ## Use
 
 ```bash
-stems2als demo --output demo/demo-set.als --project-name "Demo Set"
+stems2als ./my-stems --output ./my-project/my-project.als --project-name "My Project"
 ```
 
 The command:

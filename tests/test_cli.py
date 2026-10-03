@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import tempfile
 import unittest
+import wave
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -17,6 +18,14 @@ from stems2als.cli import (
 
 
 class Stems2AlsTests(unittest.TestCase):
+    @staticmethod
+    def _write_wav(path: Path, sample_rate: int = 8000) -> None:
+        with wave.open(str(path), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(sample_rate)
+            audio.writeframes(b"\0\0" * sample_rate)
+
     def test_clean_track_name(self) -> None:
         self.assertEqual(clean_track_name(Path("lead_vocals.flac")), "lead vocals")
         self.assertEqual(
@@ -37,17 +46,20 @@ class Stems2AlsTests(unittest.TestCase):
                 ["a.mp3", "B.WAV"],
             )
 
-    def test_installed_template_can_build_demo_project(self) -> None:
-        repository = Path(__file__).resolve().parents[1]
-        demo = repository / "demo"
-        audio_files = list_audio_files(demo)
+    def test_installed_template_can_build_project(self) -> None:
         try:
             templates = discover_templates()
         except FileNotFoundError as exc:
             self.skipTest(str(exc))
 
         with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "demo.als"
+            temporary_path = Path(temporary)
+            stems = temporary_path / "stems"
+            stems.mkdir()
+            self._write_wav(stems / "bass.wav")
+            self._write_wav(stems / "vocals.wav")
+            audio_files = list_audio_files(stems)
+            output = temporary_path / "demo.als"
             root = build_project(templates, audio_files, output, 120)
             write_project(root, output)
 
