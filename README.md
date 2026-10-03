@@ -40,6 +40,8 @@ stems2als ./my-stems --output ./my-project/my-project.als --project-name "My Pro
 The command:
 
 - creates one Arrangement View track per audio file;
+- places identified vocal tracks first;
+- places a track named `instrum` last and sets its volume to zero;
 - copies audio into `Samples/Imported/` beside the set;
 - reads each file's real duration and sample rate;
 - sets all clips to start together at bar 1;

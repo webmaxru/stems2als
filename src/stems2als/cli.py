@@ -56,7 +56,7 @@ def list_audio_files(directory: Path) -> list[Path]:
 
     tracks = [
         path
-        for path in sorted(directory.iterdir(), key=lambda item: item.name.casefold())
+        for path in directory.iterdir()
         if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS
     ]
     if not tracks:
@@ -65,7 +65,7 @@ def list_audio_files(directory: Path) -> list[Path]:
             f"No supported audio files found in {directory}. "
             f"Supported extensions: {supported}"
         )
-    return tracks
+    return sorted(tracks, key=_track_sort_key)
 
 
 def audio_info(path: Path) -> AudioInfo:
@@ -86,6 +86,25 @@ def clean_track_name(path: Path) -> str:
     if stem_marker:
         name = stem_marker.group(1)
     return name.replace("_", " ").strip() or path.name
+
+
+def _is_vocal_track(path: Path) -> bool:
+    words = re.findall(r"[a-z0-9]+", clean_track_name(path).casefold())
+    return any(word in {"vocal", "vocals"} for word in words)
+
+
+def _is_instrum_track(path: Path) -> bool:
+    return clean_track_name(path).casefold() == "instrum"
+
+
+def _track_sort_key(path: Path) -> tuple[int, str]:
+    if _is_vocal_track(path):
+        position = 0
+    elif _is_instrum_track(path):
+        position = 2
+    else:
+        position = 1
+    return position, path.name.casefold()
 
 
 def _candidate_install_roots() -> Iterable[Path]:
@@ -369,7 +388,10 @@ def build_project(
         track = copy.deepcopy(track_prototype)
         _clear_clip_slots(track)
         next_id = _renumber_track(track, next_id)
-        _set_track_name(track, clean_track_name(source))
+        track_name = clean_track_name(source)
+        _set_track_name(track, track_name)
+        if _is_instrum_track(source):
+            _set_value(track, "./DeviceChain/Mixer/Volume/Manual", "0")
 
         events = track.find(".//MainSequencer/Sample/ArrangerAutomation/Events")
         if events is None:

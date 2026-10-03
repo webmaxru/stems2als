@@ -40,10 +40,12 @@ class Stems2AlsTests(unittest.TestCase):
             folder = Path(temporary)
             (folder / "B.WAV").touch()
             (folder / "a.mp3").touch()
+            (folder / "instrum.flac").touch()
             (folder / "notes.txt").touch()
+            (folder / "vocals.ogg").touch()
             self.assertEqual(
                 [path.name for path in list_audio_files(folder)],
-                ["a.mp3", "B.WAV"],
+                ["vocals.ogg", "a.mp3", "B.WAV", "instrum.flac"],
             )
 
     def test_installed_template_can_build_project(self) -> None:
@@ -57,7 +59,12 @@ class Stems2AlsTests(unittest.TestCase):
             stems = temporary_path / "stems"
             stems.mkdir()
             self._write_wav(stems / "bass.wav")
-            self._write_wav(stems / "vocals.wav")
+            self._write_wav(
+                stems / "20261002-10._bs6stem_mt_0_instrum_[mvsep.com].wav"
+            )
+            self._write_wav(
+                stems / "20261002-10._bs6stem_mt_0_vocals_[mvsep.com].wav"
+            )
             audio_files = list_audio_files(stems)
             output = temporary_path / "demo.als"
             root = build_project(templates, audio_files, output, 120)
@@ -73,6 +80,19 @@ class Stems2AlsTests(unittest.TestCase):
             )
             self.assertEqual(len(tracks), len(audio_files))
             self.assertEqual(len(clips), len(audio_files))
+            self.assertEqual(
+                [
+                    track.find("./Name/EffectiveName").get("Value")
+                    for track in tracks
+                ],
+                ["vocals", "bass", "instrum"],
+            )
+            self.assertEqual(
+                tracks[-1]
+                .find("./DeviceChain/Mixer/Volume/Manual")
+                .get("Value"),
+                "0",
+            )
 
             referenced = {
                 element.get("Value")
