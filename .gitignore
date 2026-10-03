@@ -1,0 +1,7 @@
+.DS_Store
+.venv/
+__pycache__/
+*.egg-info/
+*.py[cod]
+demo/**/*.mp3
+demo/**/*.asd

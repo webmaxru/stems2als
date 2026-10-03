@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stems2als"
+version = "0.2.0"
+description = "Create an Ableton Live project from audio stems, one track per file."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Copilot" }]
+license = { text = "MIT" }
+dependencies = ["mutagen>=1.47,<2"]
+
+[project.scripts]
+stems2als = "stems2als.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
